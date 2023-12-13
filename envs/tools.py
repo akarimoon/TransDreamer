@@ -38,34 +38,38 @@ import torch
 
 
 def video_summary(writer, name, video, step=None):
-  name = name if isinstance(name, str) else name.decode('utf-8')
-  if np.issubdtype(video.dtype, np.floating):
-    video = np.clip(255 * video, 0, 255).astype(np.uint8)
+    name = name if isinstance(name, str) else name.decode("utf-8")
+    if np.issubdtype(video.dtype, np.floating):
+        video = np.clip(255 * video, 0, 255).astype(np.uint8)
 
-  writer.add_video(
-    name,
-    torch.tensor(video),
-    step,
-  )
+    writer.add_video(
+        name,
+        torch.tensor(video),
+        step,
+    )
 
 
 def encode_gif(frames, fps):
-  from subprocess import Popen, PIPE
-  h, w, c = frames[0].shape
-  pxfmt = {1: 'gray', 3: 'rgb24'}[c]
-  cmd = ' '.join([
-      f'ffmpeg -y -f rawvideo -vcodec rawvideo',
-      f'-r {fps:.02f} -s {w}x{h} -pix_fmt {pxfmt} -i - -filter_complex',
-      f'[0:v]split[x][z];[z]palettegen[y];[x]fifo[x];[x][y]paletteuse',
-      f'-r {fps:.02f} -f gif -'])
-  proc = Popen(cmd.split(' '), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-  for image in frames:
-    proc.stdin.write(image.tostring())
-  out, err = proc.communicate()
-  if proc.returncode:
-    raise IOError('\n'.join([' '.join(cmd), err.decode('utf8')]))
-  del proc
-  return out
+    from subprocess import Popen, PIPE
+
+    h, w, c = frames[0].shape
+    pxfmt = {1: "gray", 3: "rgb24"}[c]
+    cmd = " ".join(
+        [
+            f"ffmpeg -y -f rawvideo -vcodec rawvideo",
+            f"-r {fps:.02f} -s {w}x{h} -pix_fmt {pxfmt} -i - -filter_complex",
+            f"[0:v]split[x][z];[z]palettegen[y];[x]fifo[x];[x][y]paletteuse",
+            f"-r {fps:.02f} -f gif -",
+        ]
+    )
+    proc = Popen(cmd.split(" "), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    for image in frames:
+        proc.stdin.write(image.tostring())
+    out, err = proc.communicate()
+    if proc.returncode:
+        raise IOError("\n".join([" ".join(cmd), err.decode("utf8")]))
+    del proc
+    return out
 
 
 # def simulate(agent, envs, steps=0, episodes=0, state=None):
@@ -104,63 +108,63 @@ def encode_gif(frames, fps):
 
 
 def count_episodes(directory):
-  # filenames = directory.glob('*.npz')
-  filenames = glob.glob(os.path.join(directory, '*.npz'))
-  filenames = [pathlib.Path(f) if isinstance(f, str) else f for f in filenames ]
-  lengths = [int(n.stem.rsplit('_', 2)[1]) - 1 for n in filenames]
-  episodes, steps = len(lengths), sum(lengths)
-  return episodes, steps
+    # filenames = directory.glob('*.npz')
+    filenames = glob.glob(os.path.join(directory, "*.npz"))
+    filenames = [pathlib.Path(f) if isinstance(f, str) else f for f in filenames]
+    lengths = [int(n.stem.rsplit("_", 2)[1]) - 1 for n in filenames]
+    episodes, steps = len(lengths), sum(lengths)
+    return episodes, steps
 
 
 def save_episodes(directory, episodes):
-  directory = pathlib.Path(directory).expanduser()
-  directory.mkdir(parents=True, exist_ok=True)
-  timestamp = datetime.datetime.now().strftime('%Y%m%dT%H%M%S')
-  for episode in episodes:
-    identifier = str(uuid.uuid4().hex)
-    length = len(episode['reward'])
-    if 'obs_reward' in episode:
-      abs_reward = sum(episode['abs_reward'])
-    else:
-      abs_reward = sum(episode['reward'])
-    filename = directory / f'{timestamp}_{identifier}_{length}_{abs_reward}.npz'
-    with io.BytesIO() as f1:
-      np.savez_compressed(f1, **episode)
-      f1.seek(0)
-      with filename.open('wb') as f2:
-        f2.write(f1.read())
+    directory = pathlib.Path(directory).expanduser()
+    directory.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    for episode in episodes:
+        identifier = str(uuid.uuid4().hex)
+        length = len(episode["reward"])
+        if "obs_reward" in episode:
+            abs_reward = sum(episode["abs_reward"])
+        else:
+            abs_reward = sum(episode["reward"])
+        filename = directory / f"{timestamp}_{identifier}_{length}_{abs_reward}.npz"
+        with io.BytesIO() as f1:
+            np.savez_compressed(f1, **episode)
+            f1.seek(0)
+            with filename.open("wb") as f2:
+                f2.write(f1.read())
 
 
 def load_episodes(directory, rescan, length=None, balance=False, seed=0):
-  directory = pathlib.Path(directory).expanduser()
-  random = np.random.RandomState(seed)
-  cache = {}
-  while True:
-    for filename in directory.glob('*.npz'):
-      if filename not in cache:
-        try:
-          with filename.open('rb') as f:
-            episode = np.load(f)
-            episode = {k: episode[k] for k in episode.keys()}
-        except Exception as e:
-          print(f'Could not load episode: {e}')
-          continue
-        cache[filename] = episode
-    keys = list(cache.keys())
-    for index in random.choice(len(keys), rescan):
-      episode = cache[keys[index]]
-      if length:
-        total = len(next(iter(episode.values())))
-        available = total - length
-        if available < 1:
-          print(f'Skipped short episode of length {available}.')
-          continue
-        if balance:
-          index = min(random.randint(0, total), available)
-        else:
-          index = int(random.randint(0, available))
-        episode = {k: v[index: index + length] for k, v in episode.items()}
-      yield episode
+    directory = pathlib.Path(directory).expanduser()
+    random = np.random.RandomState(seed)
+    cache = {}
+    while True:
+        for filename in directory.glob("*.npz"):
+            if filename not in cache:
+                try:
+                    with filename.open("rb") as f:
+                        episode = np.load(f)
+                        episode = {k: episode[k] for k in episode.keys()}
+                except Exception as e:
+                    print(f"Could not load episode: {e}")
+                    continue
+                cache[filename] = episode
+        keys = list(cache.keys())
+        for index in random.choice(len(keys), rescan):
+            episode = cache[keys[index]]
+            if length:
+                total = len(next(iter(episode.values())))
+                available = total - length
+                if available < 1:
+                    print(f"Skipped short episode of length {available}.")
+                    continue
+                if balance:
+                    index = min(random.randint(0, total), available)
+                else:
+                    index = int(random.randint(0, available))
+                episode = {k: v[index : index + length] for k, v in episode.items()}
+            yield episode
 
 
 # class DummyEnv:
@@ -360,13 +364,14 @@ def load_episodes(directory, rescan, length=None, balance=False, seed=0):
 
 
 def args_type(default):
-  if isinstance(default, bool):
-    return lambda x: bool(['False', 'True'].index(x))
-  if isinstance(default, int):
-    return lambda x: float(x) if ('e' in x or '.' in x) else int(x)
-  if isinstance(default, pathlib.Path):
-    return lambda x: pathlib.Path(x).expanduser()
-  return type(default)
+    if isinstance(default, bool):
+        return lambda x: bool(["False", "True"].index(x))
+    if isinstance(default, int):
+        return lambda x: float(x) if ("e" in x or "." in x) else int(x)
+    if isinstance(default, pathlib.Path):
+        return lambda x: pathlib.Path(x).expanduser()
+    return type(default)
+
 
 #
 # def static_scan(fn, inputs, start, reverse=False):
@@ -409,28 +414,26 @@ def args_type(default):
 
 
 class Every:
+    def __init__(self, every):
+        self._every = every
+        self._last = None
 
-  def __init__(self, every):
-    self._every = every
-    self._last = None
-
-  def __call__(self, step):
-    if self._last is None:
-      self._last = step
-      return True
-    if step >= self._last + self._every:
-      self._last += self._every
-      return True
-    return False
+    def __call__(self, step):
+        if self._last is None:
+            self._last = step
+            return True
+        if step >= self._last + self._every:
+            self._last += self._every
+            return True
+        return False
 
 
 class Once:
+    def __init__(self):
+        self._once = True
 
-  def __init__(self):
-    self._once = True
-
-  def __call__(self):
-    if self._once:
-      self._once = False
-      return True
-    return False
+    def __call__(self):
+        if self._once:
+            self._once = False
+            return True
+        return False
