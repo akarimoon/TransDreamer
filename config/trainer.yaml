@@ -1,0 +1,22 @@
+defaults:
+  - _self_
+  - world_model
+  - actor_critic
+  - env
+
+wandb:
+  mode: online
+  project: TransDreamer
+  entity: null
+  name: null
+  group: null
+  tags: null
+  notes: null
+
+initialization:
+  resume_ckpt: null
+
+common:
+  resume: False
+
+training:
