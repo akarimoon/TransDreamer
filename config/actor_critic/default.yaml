@@ -1,0 +1,23 @@
+actor:
+  _target_: models.encoder_decoder.ActionDecoder
+  config:
+    _target_: models.encoder_decoder.ActionDecoderConfig
+    input_size: null
+    action_size: null
+    layers: 4
+    units: 400
+    dist: onehot
+    act: elu
+value:
+  _target_: models.encoder_decoder.DenseDecoder
+  config: 
+    _target_: models.encoder_decoder.DenseDecoderConfig
+    input_size: null
+    layers: 4
+    units: 400
+    dist: normal
+    output_size: 1
+    act: elu
+slow_value:
+  _target_: models.encoder_decoder.DenseDecoder
+  config: ${..value.config}

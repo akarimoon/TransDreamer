@@ -1,5 +1,5 @@
 from collections import defaultdict
-import os
+from functools import partial
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
@@ -10,26 +10,20 @@ import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 import torch
-import torch.nn as nn
 from torch import optim
-from torchvision import utils as vutils
-from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
-import torch.autograd.profiler as profiler
 from tqdm import tqdm
 import wandb
 
-# from utils import Checkpointer
-# from solver import get_optimizer
-# from envs import make_env, count_steps
-# from data import EnvIterDataset
-from envs import make_env
-from model import TransformerModel
-from utils import set_seed
+from env.wrapper import make_env
+from models import TransDreamer
+from utils import set_seed, set_hyperparams
 
 
 class Trainer:
     def __init__(self, cfg: DictConfig) -> None:
+        # Setup hyperparameter dependencies
+        cfg = set_hyperparams(cfg)
+
         wandb.init(
             config=OmegaConf.to_container(cfg, resolve=True),
             reinit=True,
@@ -57,23 +51,43 @@ class Trainer:
             self.ckpt_dir.mkdir(exist_ok=False, parents=False)
             self.media_dir.mkdir(exist_ok=False, parents=False)
 
-        # Setup environment
-        self.train_env = instantiate(cfg.env.train)
-        self.test_env = instantiate(cfg.env.test)
-
-        #TODO:
         # Setup dataset
+        train_dataset = instantiate(cfg.datasets.train)
+        test_dataset = instantiate(cfg.datasets.test)
 
-        # Setup model
-        self.model = TransformerModel(cfg.arch).to(self.device)
-        #TODO:
-        # optimizer
-        opt_fn = optim.AdamW if cfg.optimize.optimizer == 'adamW' else optim.Adam
-        kwargs = {"weight_decay": cfg.optimize.weight_decay, "eps": cfg.optimize.eps}
-        self.optimizer_world_model = opt_fn(self.model.world_model.parameters(), cfg.optimize.model_lr, **kwargs)
-        self.optimizer_actor = opt_fn(self.model.actor.parameters(), cfg.optimize.actor_lr, **kwargs)
-        self.optimizer_value = opt_fn(self.model.value.parameters(), cfg.optimize.value_lr, **kwargs)
+        # Setup environment
+        self.train_env = make_env(**cfg.env.train, dataset=train_dataset)
+        self.test_env = make_env(**cfg.env.test, dataset=test_dataset)
+        
+        world_model = instantiate(cfg.world_model, sequence_length=cfg.training.sequence_length,
+                                  discount=cfg.rl.discount, r_transform=cfg.rl.r_transform)
+        actor = instantiate(cfg.actor_critic.actor)
+        value = instantiate(cfg.actor_critic.value)
+        slow_value = instantiate(cfg.actor_critic.value)
+        self.model = TransDreamer(world_model, actor, value, slow_value, 
+                                  batch_length=cfg.training.batch_num_samples, lambda_=cfg.rl.lambda_
+        ).to(self.device)
+        self.model._setup_loss_config(cfg.training.loss)
+
+        opt_fn = optim.AdamW if cfg.training.optimizer == 'adamW' else optim.Adam
+        kwargs = {"weight_decay": cfg.training.weight_decay, "eps": cfg.training.eps}
+        self.optimizer_world_model = opt_fn(self.model.world_model.parameters(), cfg.training.model_lr, **kwargs)
+        self.optimizer_actor = opt_fn(self.model.actor.parameters(), cfg.training.actor_lr, **kwargs)
+        self.optimizer_value = opt_fn(self.model.value.parameters(), cfg.training.value_lr, **kwargs)
+        
         # scheduler
+
+    def anneal_temp(self) -> float:
+        temp_start = self.cfg.training.temp.start
+        temp_end = self.cfg.training.temp.end
+        decay_steps = self.cfg.training.temp.decay_steps
+        temp = (
+            temp_start - (temp_start - temp_end) * (self.global_step - self.cfg.training.prefill) / decay_steps
+        )
+
+        temp = max(temp, temp_end)
+
+        return temp
 
     def run(self) -> None:
 
@@ -84,13 +98,17 @@ class Trainer:
         state = None
         action_list = torch.zeros(1, 1, self.cfg.env.action_size).float()  # T, C
         action_list[0, 0, 0] = 1.0
-        for step in tqdm(range(self.cfg.total_steps)):
+        for step in tqdm(range(self.cfg.common.total_steps)):
             obs, state, action_list = self.collect(obs, state, action_list)
 
-            self.train()
+            if self.global_step % self.cfg.training.train_every == 0:
+                self.train()
 
-            if self.global_step % self.cfg.train.eval_every_step == 0:
+            if self.global_step % self.cfg.evaluation.eval_every == 0:
                 self.test()
+
+            if self.global_step % self.cfg.evaluation.save_every == 0:
+                self.save()
 
             self.global_step += 1
 
@@ -99,7 +117,8 @@ class Trainer:
 
         self.train_env.reset()
         length = 0
-        for step in tqdm(range(self.cfg.arch.prefill)):
+        steps = 0
+        for step in tqdm(range(self.cfg.training.prefill)):
             action = self.train_env.sample_random_action()
             _, _, done = self.train_env.step(action[0])
             length += 1
@@ -107,29 +126,28 @@ class Trainer:
             length = length * (1.0 - done)
             if done:
                 self.train_env.reset()
-
-        self.train_dataset = ...
-        self.train_dataloader = ...
-        self.train_iter = iter(self.train_dataloader)
+            if steps >= self.cfg.training.prefill:
+                break
 
     @torch.no_grad()
     def collect(self, obs, state, action_list) -> None:
-        input_type = self.cfg.arch.world_model.input_type
+        input_type = self.model.world_model.input_type
 
         self.model.eval()
-        next_obs, reward, done = self.train_env.step(
-            action_list[0, -1].detach().cpu().numpy()
-        )
-        prev_image = torch.tensor(obs[input_type])
-        next_image = torch.tensor(next_obs[input_type])
+        next_obs, reward, done = self.train_env.step(action_list[0, -1].detach().cpu().numpy())
+
+        batch = {
+            "prev_image": torch.tensor(obs[input_type]),
+            "next_image": torch.tensor(next_obs[input_type]),
+            "action_list": action_list,
+        }
+        batch = self._to_device(batch)
         action_list, state = self.model.policy(
-            prev_image.to(self.device),
-            next_image.to(self.device),
-            action_list.to(self.device),
+            batch,
             self.global_step,
             0.1,
             state,
-            context_len=self.cfg.train.batch_length,
+            context_len=self.cfg.training.sequence_length,
         )
         obs = next_obs
         if done:
@@ -141,34 +159,55 @@ class Trainer:
         return obs, state, action_list
     
     def train(self) -> None:
+        temp = self.anneal_temp()
+
         self.model.train()
 
-        traj = next(self.train_iter)
+        traj = self.train_env.sample_batch(self.cfg.training.batch_num_samples, self.cfg.training.sequence_length)
         traj = self._to_device(traj)
 
         start_time = time.time()
         to_log = []
 
         # Train world model
-        log, post_state = self.model.compute_world_model_loss(traj, self.model_optimizer, temp)
+        self.optimizer_world_model.zero_grad()
+        model_loss, log, post_state = self.model.compute_world_model_loss(traj, temp)
         for k, v in log.items():
             to_log.append({f'world_model/train/{k}': v})
-        to_log += log
+        model_loss.backward()
+        if self.cfg.training.grad_clip is not None:
+            torch.nn.utils.clip_grad_norm_(self.model.world_model.parameters(), self.cfg.training.grad_clip)
+        self.optimizer_world_model.step()
 
         # Train actor-critic
-        log = self.model.compute_actor_and_value_loss(traj, post_state, self.actor_optimizer, self.value_optimizer, temp)        
+        self.optimizer_actor.zero_grad()
+        self.optimizer_value.zero_grad()
+        actor_loss, value_loss, log = self.model.compute_actor_and_value_loss(traj, post_state, temp)        
         for k, v in log.items():
             to_log.append({f'actor_critic/train/{k}': v})
-        to_log += log
+        actor_loss.backward()
+        value_loss.backward()
+        if self.cfg.training.grad_clip is not None:
+            torch.nn.utils.clip_grad_norm_(self.model.actor.parameters(), self.cfg.training.grad_clip)
+            torch.nn.utils.clip_grad_norm_(self.model.value.parameters(), self.cfg.training.grad_clip)
+        self.optimizer_actor.step()
+        self.optimizer_value.step()
+
+        # Update target
+        if self.model.slow_update % self.cfg.training.slow_update_step == 0:
+            self.model.update_slow_target()
 
         # Log
         to_log.append({'duration': (time.time() - start_time) / 3600})
-        if self.global_step % self.cfg.train.log_every_step == 0:
+        if self.global_step % self.cfg.training.log_every == 0:
             for metrics in to_log:
                 wandb.log({'step': self.global_step, **metrics})
 
     @torch.no_grad()
     def test(self) -> None:
+        pass
+
+    def save(self) -> None:
         pass
 
     def _to_device(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

@@ -1,11 +1,11 @@
+from dataclasses import dataclass
 import numpy as np
+import gym
+import pdb
 
 from .atari_env import Atari
 from .crafter import Crafter
 
-import numpy as np
-import gym
-import pdb
 
 class OneHotAction:
     def __init__(self, env):
@@ -31,7 +31,7 @@ class OneHotAction:
                 1,
                 self._env.action_space.n,
             ),
-            dtype=np.float,
+            dtype=np.float32,
         )
         idx = np.random.randint(0, self._env.action_space.n, size=(1,))[0]
         action[0, idx] = 1
@@ -68,9 +68,9 @@ class TimeLimit:
 
 
 class Collect:
-    def __init__(self, env, callbacks=None, precision=32):
+    def __init__(self, env, dataset, precision=32):
         self._env = env
-        self._callbacks = callbacks or ()
+        self.dataset = dataset
         self._precision = precision
         self._episode = None
 
@@ -90,8 +90,7 @@ class Collect:
             episode = {k: [t[k] for t in self._episode] for k in self._episode[0]}
             episode = {k: self._convert(v) for k, v in episode.items()}
             info["episode"] = episode
-            for callback in self._callbacks:
-                callback(episode)
+            self.dataset.add_episode(episode)
         obs["image"] = obs["image"][None, ...]
         return obs, reward, done, info
 
@@ -118,6 +117,9 @@ class Collect:
             pdb.set_trace()
             raise NotImplementedError(value.dtype)
         return value.astype(dtype)
+    
+    def sample_batch(self, batch_num_samples, sequence_length):
+        return self.dataset.sample_batch(batch_num_samples, sequence_length)
 
 
 class RewardObs:
@@ -144,37 +146,29 @@ class RewardObs:
         obs["reward"] = 0.0
         return obs
 
-
-def make_env(cfg):
-    suite, task = cfg.env.name.split("_", 1)
-
+def make_env(suite, id, dataset, action_repeat, grayscale, all_actions, time_limit, time_penalty, precision):
     if suite == "atari":
         env = Atari(
-            task,
-            cfg.env.action_repeat,
+            id,
+            action_repeat,
             (64, 64),
-            grayscale=cfg.env.grayscale,
+            grayscale=grayscale,
             life_done=False,
             sticky_actions=True,
-            all_actions=cfg.env.all_actions,
+            all_actions=all_actions,
         )
         env = OneHotAction(env)
 
+    #TODO: check if this works
     elif suite == "crafter":
-        env = Crafter(task, (64, 64))
+        env = Crafter(id, (64, 64))
         env = OneHotAction(env)
 
     else:
         raise NotImplementedError(suite)
 
-    env = TimeLimit(env, cfg.env.time_limit, cfg.env.time_penalty)
-
-    callbacks = []
-    #TODO: add callbacks
-    # if store:
-    #     callbacks.append(lambda ep: tools.save_episodes(datadir, [ep]))
-    # callbacks.append(lambda ep: summarize_episode(ep, cfg, datadir, writer, prefix))
-    env = Collect(env, callbacks, cfg.env.precision)
+    env = TimeLimit(env, time_limit, time_penalty)
+    env = Collect(env, dataset, precision)
     env = RewardObs(env)
 
     return env

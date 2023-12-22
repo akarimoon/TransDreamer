@@ -1,8 +1,9 @@
 defaults:
   - _self_
-  - world_model
-  - actor_critic
-  - env
+  - world_model: default
+  - actor_critic: default
+  - env: default
+  - datasets: default
 
 wandb:
   mode: online
@@ -17,6 +18,42 @@ initialization:
   resume_ckpt: null
 
 common:
+  total_steps: 5000000
+  seed: 0
+  device: cuda:0
   resume: False
 
 training:
+  prefill: 50000
+  train_every: 16
+  log_every: 1000
+  optimizer: adamW
+  weight_decay: 1.0e-6
+  eps: 1.0e-5
+  model_lr: 0.0002 # 2e-4
+  actor_lr: 0.00004 # 4e-5
+  value_lr: 0.0001 # 1e-4
+  batch_num_samples: 50
+  sequence_length: 50
+  grad_clip: 100.0
+  slow_update_step: 100
+  loss:
+    actor_loss_type: reinforce
+    pcont_scale: 5.0
+    kl_scale: 0.1
+    kl_balance: 0.8
+    free_nats: 0.0
+    ent_scale: 0.001
+  temp:
+    start: 2.9
+    end: 0.001
+    decay_steps: 1000000
+
+evaluation:
+  eval_every: 100000
+  save_every: 10000
+
+rl:
+  discount: 0.999
+  lambda_: 0.95
+  r_transform: tanh

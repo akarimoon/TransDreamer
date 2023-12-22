@@ -1,0 +1,70 @@
+_target_: models.world_model.TransformerWorldModel
+H: 15
+sequence_length: null
+
+dynamic:
+  _target_: models.world_model.TransformerDynamic
+  config:
+    _target_: models.world_model.TransformerDynamicConfig
+    input_type: image
+    action_size: null
+    hidden_size: 600
+    stoch_size: 32
+    stoch_discrete: 32
+    discrete_type: discrete
+    q_emb_action: False
+    reward_layer: 0
+    act: elu
+    weight_init: xavier
+  img_enc:
+    _target_: models.encoder_decoder.ImgEncoder
+    config:
+      _target_: models.encoder_decoder.ImgEncoderConfig
+      c_in: None
+  cell:
+    _target_: models.transformer.Transformer
+    config:
+      _target_: models.transformer.TransformerConfig
+      num_heads: 8
+      n_layers: 6
+      d_model: 600
+      dropout: 0.1
+      dropatt: 0.1
+      deter_type: concat_o
+      gating: False
+      last_ln: False
+      warm_up: False
+  q_transformer:
+    _target_: models.transformer.Transformer
+    config: ${..cell.config}
+
+img_dec:
+  _target_: models.encoder_decoder.ImgDecoder
+  config:
+    _target_: models.encoder_decoder.ImgDecoderConfig
+    input_size: null
+    c_out: null
+    dec_type: conv
+    rec_sigma: 0.3
+
+reward:
+  _target_: models.encoder_decoder.DenseDecoder
+  config:
+    _target_: models.encoder_decoder.DenseDecoderConfig
+    input_size: null
+    layers: 4
+    units: 400
+    dist: normal
+    output_size: 1
+    act: elu
+
+pcont:
+  _target_: models.encoder_decoder.DenseDecoder
+  config:
+    _target_: models.encoder_decoder.DenseDecoderConfig
+    input_size: None
+    layers: 4
+    units: 400
+    dist: binary
+    output_size: 1
+    act: elu
