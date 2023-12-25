@@ -90,7 +90,10 @@ class TransDreamer(nn.Module):
         rec_img = logs["dec_img"]
         gt_img = logs["gt_img"]  # B, {1:T}, C, H, W
 
-        writer.add_video("train/rec - gt", torch.cat([gt_img[:4], rec_img[:4]], dim=-2).clamp(0.0, 1.0).cpu(), global_step=global_step,)
+        diff_video = torch.cat([gt_img[:4], rec_img[:4]], dim=-2).clamp(0.0, 1.0).cpu()
+        if diff_video.shape[2] == 1: # grayscale
+            diff_video = diff_video.repeat(1, 1, 3, 1, 1)
+        writer.add_video("train/rec - gt", diff_video, global_step=global_step,)
 
         for k, v in logs.items():
             if "loss" in k:

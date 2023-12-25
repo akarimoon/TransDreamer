@@ -25,27 +25,19 @@ class Atari:
         seed=0,
     ):
         assert size[0] == size[1]
-        import gym.wrappers
-        import gym.envs.atari
-
-        if name == "james_bond":
-            name = "jamesbond"
         with self.LOCK:
-            env = gym.envs.atari.AtariEnv(
-                game=name,
+            env = gym.make(
+                id="BoxingNoFrameskip-v4",
                 obs_type="image",
                 frameskip=1,
                 repeat_action_probability=0.25 if sticky_actions else 0.0,
                 full_action_space=all_actions,
             )
-            env.seed(seed=seed)
-        # Avoid unnecessary rendering in inner env.
         env._get_obs = lambda: None
-        # Tell wrapper that the inner env has no action repeat.
-        env.spec = gym.envs.registration.EnvSpec("NoFrameskip-v0")
         env = gym.wrappers.AtariPreprocessing(
             env, noops, action_repeat, size[0], life_done, grayscale
         )
+        assert 'NoFrameskip' in env.spec.id or 'Frameskip' not in env.spec
         self._env = env
         self._grayscale = grayscale
         self._size = size
@@ -69,14 +61,14 @@ class Atari:
 
     def reset(self):
         with self.LOCK:
-            image = self._env.reset()
+            image, _ = self._env.reset()
         if self._grayscale:
             image = image[..., None]
         image = np.transpose(image, (2, 0, 1))  # 3, 64, 64
         return {"image": image}
 
     def step(self, action):
-        image, reward, done, info = self._env.step(action)
+        image, reward, done, _, info = self._env.step(action)
         if self._grayscale:
             image = image[..., None]
         image = np.transpose(image, (2, 0, 1))  # 3, 64, 64
@@ -111,7 +103,7 @@ class OneHotAction:
                 1,
                 self._env.action_space.n,
             ),
-            dtype=np.float,
+            dtype=np.float32,
         )
         idx = np.random.randint(0, self._env.action_space.n, size=(1,))[0]
         action[0, idx] = 1

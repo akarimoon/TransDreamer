@@ -2,8 +2,8 @@ from yacs.config import CfgNode as CN
 
 cfg = CN(
     {
-        "exp_name": "",
-        'logdir': '/data/local/cc1547/projects/TSSM',
+        "exp_name": "test",
+        'logdir': '/project/TransDreamer',
         "resume": True,
         "resume_ckpt": "",
         "debug": False,
@@ -136,7 +136,7 @@ cfg = CN(
             "r_transform": "tanh",
         },
         "data": {
-            'datadir': '/data/local/cc1547/projects/TSSM',
+            'datadir': '/project/TransDreamer',
         },
         "train": {
             "batch_length": 50,
@@ -170,7 +170,7 @@ cfg = CN(
             "discount_scale": 5.0,
         },
         "checkpoint": {
-            'checkpoint_dir': '/data/local/cc1547/projects/TSSM',
+            'checkpoint_dir': '/project/TransDreamer',
             "max_num": 3,
         },
     }

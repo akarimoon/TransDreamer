@@ -41,6 +41,8 @@ def video_summary(writer, name, video, step=None):
     name = name if isinstance(name, str) else name.decode("utf-8")
     if np.issubdtype(video.dtype, np.floating):
         video = np.clip(255 * video, 0, 255).astype(np.uint8)
+    if video.shape[2] == 1: # grayscale
+        video = video.repeat(3, axis=2)
 
     writer.add_video(
         name,

@@ -20,6 +20,7 @@ from .transformer import Transformer
 from collections import defaultdict
 import numpy as np
 import pdb
+from einops import rearrange
 import time
 
 
@@ -545,10 +546,10 @@ class ImgDecoder(nn.Module):
         self.fc = Linear(input_size, 1536, bias=True, weight_init="xavier")
         if cfg.arch.decoder.dec_type == "conv":
             self.dec = nn.Sequential(
-                ConvTranspose2DBlock(1536, 4 * depth, 5, 2, 0, num_groups=0, bias=True, non_linearity=True, act="elu", weight_init="xavier"),
-                ConvTranspose2DBlock(4 * depth, 2 * depth, 5, 2, 0, num_groups=0, bias=True, non_linearity=True, act="elu", weight_init="xavier"),
-                ConvTranspose2DBlock(2 * depth, depth, 5, 2, 0, num_groups=0, bias=True, non_linearity=True, act="elu", weight_init="xavier"),
-                ConvTranspose2DBlock(depth, self.c_out, 6, 2, 0, num_groups=0, bias=True, non_linearity=False, weight_init="xavier"),
+                ConvTranspose2DBlock(1536, 4 * depth, 5, 2, 0, 0, num_groups=0, bias=True, non_linearity=True, act="elu", weight_init="xavier"),
+                ConvTranspose2DBlock(4 * depth, 2 * depth, 5, 2, 0, 0, num_groups=0, bias=True, non_linearity=True, act="elu", weight_init="xavier"),
+                ConvTranspose2DBlock(2 * depth, depth, 5, 2, 0, 1, num_groups=0, bias=True, non_linearity=True, act="elu", weight_init="xavier"),
+                ConvTranspose2DBlock(depth, self.c_out, 6, 2, 0, 0, num_groups=0, bias=True, non_linearity=False, weight_init="xavier"),
             )
 
         elif cfg.dec_type == "pixelshuffle":
@@ -569,7 +570,7 @@ class ImgDecoder(nn.Module):
 
         fc_o = self.fc(ipts)
         dec_o = self.dec(fc_o.reshape(shape[0] * shape[1], 1536, 1, 1))
-        dec_o = dec_o.reshape([*shape[:2]] + [self.c_out, 64, 64])
+        dec_o = rearrange(dec_o, "(b t) c h w -> b t c h w", b=shape[0])
 
         dec_pdf = Independent(
             Normal(dec_o, self.rec_sigma * dec_o.new_ones(dec_o.shape)), len(self.shape)

@@ -121,6 +121,7 @@ class ConvTranspose2DBlock(nn.Module):
         k,
         s,
         p,
+        o_p,
         num_groups=0,
         bias=True,
         non_linearity=True,
@@ -130,7 +131,7 @@ class ConvTranspose2DBlock(nn.Module):
         super().__init__()
 
         self.net = nn.ConvTranspose2d(
-            c_in, c_out, kernel_size=k, stride=s, padding=p, bias=bias
+            c_in, c_out, kernel_size=k, stride=s, padding=p, bias=bias, output_padding=o_p
         )
 
         if weight_init == "xavier":
