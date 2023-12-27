@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.one_hot_categorical import OneHotCategorical
 from torch.distributions import Independent, Normal, kl_divergence
+import wandb
 
 from .distributions import MyRelaxedOneHotCategorical
 from .encoder_decoder import ImgEncoder, ImgDecoder, DenseDecoder, ActionDecoder
@@ -401,6 +402,9 @@ class TransformerWorldModel(nn.Module):
 
         post_dist = Independent(OneHotCategorical(logits=post_state_trimed["logits"]), 1)
         prior_dist = Independent(OneHotCategorical(logits=prior_state["logits"]), 1)
+
+        video = self._get_video(image_pred_pdf, obs)
+
         logs = {
             "model_loss": model_loss.detach().item(),
             "model_kl_loss": kl_loss.detach().item(),
@@ -408,10 +412,10 @@ class TransformerWorldModel(nn.Module):
             "model_image_loss": image_pred_loss.detach().item(),
             "model_mse_loss": mse_loss.detach(),
             # "ACT_prior_state": {k: v.detach() for k, v in prior_state.items()},
-            # "ACT_prior_entropy": prior_dist.entropy().mean().detach().item(),
+            "ACT_prior_entropy": prior_dist.entropy().mean().detach().item(),
             # "ACT_post_state": {k: v.detach() for k, v in post_state.items()},
-            # "ACT_post_entropy": post_dist.entropy().mean().detach().item(),
-            # "ACT_gt_reward": reward[:, 1:],
+            "ACT_post_entropy": post_dist.entropy().mean().detach().item(),
+            "ACT_gt_reward": wandb.Histogram(reward[:, 1:].detach().cpu().numpy()),
             # "dec_img": (image_pred_pdf.mean.detach() + 0.5),  # B, T, 3, 64, 64
             # "gt_img": obs[:, 1:] + 0.5,
             "reward_input": rnn_feature.detach(),

@@ -35,7 +35,6 @@ class Trainer:
             set_seed(cfg.common.seed)
 
         self.cfg = cfg
-        self.start_epoch = 1
         self.device = torch.device(cfg.common.device)
 
         self.ckpt_dir = Path('checkpoints')
@@ -68,6 +67,7 @@ class Trainer:
                                   batch_length=cfg.training.batch_num_samples, lambda_=cfg.rl.lambda_
         ).to(self.device)
         self.model._setup_loss_config(cfg.training.loss)
+        self.input_type = self.model.world_model.input_type
 
         opt_fn = optim.AdamW if cfg.training.optimizer == 'adamW' else optim.Adam
         kwargs = {"weight_decay": cfg.training.weight_decay, "eps": cfg.training.eps}
@@ -76,6 +76,8 @@ class Trainer:
         self.optimizer_value = opt_fn(self.model.value.parameters(), cfg.training.value_lr, **kwargs)
         
         # scheduler
+
+
 
     def anneal_temp(self) -> float:
         temp_start = self.cfg.training.temp.start
@@ -93,12 +95,17 @@ class Trainer:
 
         self.global_step = 0
         self.collect_seed_episodes()
+        steps = self.train_env.dataset.num_seen_steps
+        print(f"Collected {steps} steps. Start training...")
 
         obs = self.train_env.reset()
         state = None
         action_list = torch.zeros(1, 1, self.cfg.env.action_size).float()  # T, C
         action_list[0, 0, 0] = 1.0
-        for step in tqdm(range(self.cfg.common.total_steps)):
+
+        self.global_step = max(self.global_step, steps)
+        init_step = self.global_step
+        for step in tqdm(range(init_step, self.cfg.common.total_steps)):
             obs, state, action_list = self.collect(obs, state, action_list)
 
             if self.global_step % self.cfg.training.train_every == 0:
@@ -117,28 +124,28 @@ class Trainer:
 
         self.train_env.reset()
         length = 0
-        steps = 0
-        for step in tqdm(range(self.cfg.training.prefill)):
-            action = self.train_env.sample_random_action()
-            _, _, done = self.train_env.step(action[0])
-            length += 1
-            steps += done * length
-            length = length * (1.0 - done)
-            if done:
-                self.train_env.reset()
-            if steps >= self.cfg.training.prefill:
-                break
+        steps = self.train_env.dataset.num_seen_steps
+        with tqdm(total=self.cfg.training.prefill) as pbar:
+            while steps < self.cfg.training.prefill:
+                action = self.train_env.sample_random_action()
+                _, _, done = self.train_env.step(action[0])
+                length += 1
+                steps += done * length
+                if done * length > 0:
+                    pbar.update(int(done * length))
+                length = length * (1.0 - done)
+                if done:
+                    self.train_env.reset()
 
     @torch.no_grad()
     def collect(self, obs, state, action_list) -> None:
-        input_type = self.model.world_model.input_type
 
         self.model.eval()
         next_obs, reward, done = self.train_env.step(action_list[0, -1].detach().cpu().numpy())
 
         batch = {
-            "prev_image": torch.tensor(obs[input_type]),
-            "next_image": torch.tensor(next_obs[input_type]),
+            "prev_image": torch.tensor(obs[self.input_type]),
+            "next_image": torch.tensor(next_obs[self.input_type]),
             "action_list": action_list,
         }
         batch = self._to_device(batch)
@@ -205,10 +212,40 @@ class Trainer:
 
     @torch.no_grad()
     def test(self) -> None:
-        pass
+        self.model.eval()
+
+        obs = self.test_env.reset()
+        action_list = torch.zeros(1, 1, self.cfg.env.action_size).float()  # T, C
+        action_list[:, 0, 0] = 1.0  # B, T, C
+        state = None
+        done = False
+
+        with torch.no_grad():
+            while not done:
+                next_obs, reward, done = self.test_env.step(action_list[0, -1].detach().cpu().numpy())
+                batch = {
+                    "prev_image": torch.tensor(obs[self.input_type]),
+                    "next_image": torch.tensor(next_obs[self.input_type]),
+                    "action_list": action_list,
+                }
+                batch = self._to_device(batch)
+                action_list, state = self.model.policy(
+                    batch,
+                    self.global_step,
+                    0.1,
+                    state,
+                    training=False,
+                    context_len=self.cfg.training.sequence_length,
+                )
+                obs = next_obs
 
     def save(self) -> None:
-        pass
+        torch.save(self.model.state_dict(), self.ckpt_dir / 'last.pt')
+        torch.save({
+            "optimizer_world_model": self.optimizer_world_model.state_dict(),
+            "optimizer_actor": self.optimizer_actor.state_dict(),
+            "optimizer_value": self.optimizer_value.state_dict(),
+        }, self.ckpt_dir / 'optimizer.pt')
 
     def _to_device(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         return {k: batch[k].to(self.device).float() for k in batch}

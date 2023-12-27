@@ -57,6 +57,7 @@ class Atari:
         self._grayscale = grayscale
         self._size = size
         self.action_size = 18
+        self.action_repeat = action_repeat
 
     @property
     def observation_space(self):

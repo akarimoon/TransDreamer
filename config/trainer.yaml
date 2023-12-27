@@ -18,7 +18,7 @@ initialization:
   resume_ckpt: null
 
 common:
-  total_steps: 5000000
+  total_steps: 10000000 # 1e7
   seed: 0
   device: cuda:0
   resume: False
@@ -45,7 +45,7 @@ training:
     free_nats: 0.0
     ent_scale: 0.001
   temp:
-    start: 2.9
+    start: 2.0
     end: 0.001
     decay_steps: 1000000
 

@@ -41,4 +41,8 @@ def set_hyperparams(cfg: DictConfig) -> DictConfig:
     cfg.world_model.dynamic.config.action_size = cfg.env.action_size
     cfg.actor_critic.actor.config.action_size = cfg.env.action_size
 
+    # action repeat
+    cfg.datasets.train.action_repeat = cfg.env.train.action_repeat
+    cfg.datasets.test.action_repeat = cfg.env.test.action_repeat
+
     return cfg

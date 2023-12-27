@@ -9,10 +9,12 @@ import torch
 import wandb
 
 class EpisodesDataset:
-    def __init__(self, max_num_episodes, name) -> None:
+    def __init__(self, max_num_episodes, action_repeat, name) -> None:
         self.max_num_episodes = max_num_episodes
+        self.action_repeat = action_repeat
         self.name = name
         self.num_seen_episodes = 0
+        self.num_seen_steps = 0
         self.episodes = deque()
         self.episodes_metrics = deque()
         self.episode_id_to_queue_idx = dict()
@@ -43,14 +45,16 @@ class EpisodesDataset:
         episode_id = self.num_seen_episodes
         self.episode_id_to_queue_idx[episode_id] = len(self.episodes)
         self.episodes.append(episode)
+        self.num_seen_episodes += 1
+        self.num_seen_steps += len(episode["reward"]) - 1
+
         to_log = [
             {f"sim/{self.name}/return": float(episode["reward"].sum())},
             {f"sim/{self.name}/length": len(episode["reward"]) - 1},
         ]
         for metrics in to_log:
-            wandb.log({'step': self.num_seen_episodes, **metrics})
+            wandb.log({'sim_step': self.num_seen_steps * self.action_repeat, **metrics})
 
-        self.num_seen_episodes += 1 
         self.newly_modified_episodes.add(episode_id)
         return episode_id
     
@@ -119,8 +123,8 @@ class EpisodesDatasetRamMonitoring(EpisodesDataset):
     Prevent episode dataset from going out of RAM.
     Warning: % looks at system wide RAM usage while G looks only at process RAM usage.
     """
-    def __init__(self, max_ram_usage: str, name: str) -> None:
-        super().__init__(max_num_episodes=None, name=name)
+    def __init__(self, max_ram_usage: str, action_repeat: int, name: str) -> None:
+        super().__init__(max_num_episodes=None, action_repeat=action_repeat, name=name)
         self.max_ram_usage = max_ram_usage
         self.num_steps = 0
         self.max_num_steps = None
